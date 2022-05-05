@@ -4,7 +4,6 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.example.reggie.common.BaseContext;
 import com.example.reggie.common.R;
-import com.example.reggie.dto.DishDto;
 import com.example.reggie.entity.ShoppingCart;
 import com.example.reggie.mapper.ShoppingCartMapper;
 import com.example.reggie.service.ShoppingCartService;

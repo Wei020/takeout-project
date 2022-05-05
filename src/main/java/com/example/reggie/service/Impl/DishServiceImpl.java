@@ -1,7 +1,8 @@
 package com.example.reggie.service.Impl;
 
+import cn.hutool.core.util.StrUtil;
+import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.example.reggie.common.R;
@@ -15,14 +16,15 @@ import org.apache.commons.lang.StringUtils;
 import org.apache.ibatis.annotations.Options;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.annotation.Bean;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.bind.annotation.PostMapping;
+
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 @Service
@@ -33,6 +35,9 @@ public class DishServiceImpl extends ServiceImpl<DishMapperr, Dish> implements D
 
     @Autowired
     private CategoryService categoryService;
+
+    @Autowired
+    private StringRedisTemplate stringRedisTemplate;
 
     @Override
     public R<Page<DishDto>> getDishes(int page, int pageSize, String name) {
@@ -86,6 +91,10 @@ public class DishServiceImpl extends ServiceImpl<DishMapperr, Dish> implements D
     @Override
     @Transactional
     public R<String> dishDel(String[] ids) {
+        for (String id : ids) {
+            Dish one = query().eq("id", id).one();
+            stringRedisTemplate.delete("dish_" + one.getCategoryId());
+        }
         removeByIds(Arrays.asList(ids));
         return R.success("删除成功！");
     }
@@ -99,6 +108,7 @@ public class DishServiceImpl extends ServiceImpl<DishMapperr, Dish> implements D
         List<DishFlavor> list = dishDto.getFlavors();
         list = list.stream().peek((item) -> item.setDishId(id)).collect(Collectors.toList());
         dishFlavorService.saveBatch(list);
+        stringRedisTemplate.delete("dish_" + dishDto.getCategoryId());
         return R.success("添加成功！");
     }
 
@@ -108,15 +118,23 @@ public class DishServiceImpl extends ServiceImpl<DishMapperr, Dish> implements D
         updateById(dishDto);
         List<DishFlavor> list = dishDto.getFlavors();
         dishFlavorService.updateBatchById(list);
+        stringRedisTemplate.delete("dish_" + dishDto.getCategoryId());
         return R.success("更新成功！");
     }
 
     @Override
     public R<List<DishDto>> getDishByCategory(String categoryId) {
+        List<DishDto> dishes1 = null;
+        String key = "dish_" + categoryId;
+        String s = stringRedisTemplate.opsForValue().get(key);
+        if(StrUtil.isNotBlank(s)){
+            dishes1 = JSONUtil.toList(s, DishDto.class);
+            return R.success(dishes1);
+        }
         List<Dish> dishes = query().eq("category_id", categoryId)
                 .eq("status", 1)
                 .list();
-        List<DishDto> dishes1 = dishes.stream().map((item) -> {
+        dishes1 = dishes.stream().map((item) -> {
             DishDto dishDto = new DishDto();
             BeanUtils.copyProperties(item, dishDto);
             Long id = item.getId();
@@ -124,6 +142,7 @@ public class DishServiceImpl extends ServiceImpl<DishMapperr, Dish> implements D
             dishDto.setFlavors(dishFlavors);
             return dishDto;
         }).collect(Collectors.toList());
+        stringRedisTemplate.opsForValue().set(key, JSONUtil.toJsonStr(dishes1), 60, TimeUnit.MINUTES);
         return R.success(dishes1);
     }
 

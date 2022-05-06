@@ -1,5 +1,6 @@
 package com.example.reggie.service.Impl;
 
+import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
@@ -14,12 +15,14 @@ import com.example.reggie.service.SetmealService;
 import org.apache.commons.lang.StringUtils;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 @Service
@@ -30,6 +33,9 @@ public class SetmealServiceImpl extends ServiceImpl<SetmealMapper, Setmeal> impl
 
     @Autowired
     private CategoryService categoryService;
+
+    @Autowired
+    private StringRedisTemplate stringRedisTemplate;
 
     @Override
     public R<Page<SetmealDto>> getMeals(int page, int pageSize, String name) {
@@ -87,6 +93,7 @@ public class SetmealServiceImpl extends ServiceImpl<SetmealMapper, Setmeal> impl
         updateById(setmealDto);
         List<SetmealDish> list = setmealDto.getSetmealDishes();
         setmealDishService.updateBatchById(list);
+        stringRedisTemplate.delete("setmeal_" + setmealDto.getCategoryId());
         return R.success("更新成功！");
     }
 
@@ -98,6 +105,7 @@ public class SetmealServiceImpl extends ServiceImpl<SetmealMapper, Setmeal> impl
         List<SetmealDish> list = setmealDto.getSetmealDishes();
         list = list.stream().peek((item) -> item.setSetmealId(id)).collect(Collectors.toList());
         setmealDishService.saveBatch(list);
+        stringRedisTemplate.delete("setmeal_" + setmealDto.getCategoryId());
         return R.success("添加成功！");
     }
 
@@ -112,20 +120,32 @@ public class SetmealServiceImpl extends ServiceImpl<SetmealMapper, Setmeal> impl
         removeByIds(Arrays.asList(ids));
         LambdaQueryWrapper<SetmealDish> lambdaQueryWrapper = new LambdaQueryWrapper<>();
         lambdaQueryWrapper.in(SetmealDish::getSetmealId, ids);
+        for (String id : ids) {
+            Setmeal one = query().eq("id", id).one();
+            stringRedisTemplate.delete("setmeal_" + one.getCategoryId());
+        }
         setmealDishService.remove(lambdaQueryWrapper);
         return R.success("删除成功！");
     }
 
     @Override
     public R<List<SetmealDto>> getSetMealList(String categoryId) {
+        List<SetmealDto> setmealDtos = null;
+        String key = "setmeal_" + categoryId;
+        String s = stringRedisTemplate.opsForValue().get(key);
+        if(s != null){
+            setmealDtos = JSONUtil.toList(s, SetmealDto.class);
+            return R.success(setmealDtos);
+        }
         List<Setmeal> setmeals = query().eq("category_id", categoryId).list();
-        List<SetmealDto> setmealDtos = setmeals.stream().map((item) -> {
+        setmealDtos = setmeals.stream().map((item) -> {
             SetmealDto setmealDto = new SetmealDto();
             BeanUtils.copyProperties(item, setmealDto);
             Category category = categoryService.query().eq("id", categoryId).one();
             setmealDto.setCategoryName(category.getName());
             return setmealDto;
         }).collect(Collectors.toList());
+        stringRedisTemplate.opsForValue().set(key, JSONUtil.toJsonStr(setmealDtos), 60, TimeUnit.MINUTES);
         return R.success(setmealDtos);
     }
 }
